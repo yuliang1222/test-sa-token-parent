@@ -21,6 +21,8 @@ public class SaSession implements Serializable {
         this.id = id;
         this.createTime = System.currentTimeMillis();
          //TODO 通知监听器
+        SaManager.getSaTokenListener().doCreateSession(id);
+
     }
     public String getId() {
         return id;
@@ -59,11 +61,38 @@ public class SaSession implements Serializable {
         tokenSignList.add(tokenSign);
         update();
     }
-
+    public void addTokenSign(String tokenValue, String device) {
+        addTokenSign(new TokenSign(tokenValue, device));
+    }
     private void update() {
         //更新Session（从持久库更新刷新一下）
         SaManager.getSaTokenDao().updateSession(this);
     }
 
+
+    public void removeTokenSign(String tokenValue) {
+        TokenSign tokenSign = getTokenSign(tokenValue);
+        if (tokenSignList.remove(tokenSign)) {
+            update();
+        }
+    }
+    public void logout() {
+        SaManager.getSaTokenDao().deleteSession(this.id);
+        SaManager.getSaTokenListener().doLogoutSession(id);
+
+    }
+    public void logoutByTokenSignCountToZero() {
+        if (tokenSignList.size() == 0) {
+            logout();
+        }
+    }
+    public long getTimeout() {
+        return SaManager.getSaTokenDao().getSessionTimeout(this.id);
+    }
+    public void updateMinTimeout(long minTimeout) {
+        if(getTimeout() < minTimeout) {
+            SaManager.getSaTokenDao().updateSessionTimeout(this.id, minTimeout);
+        }
+    }
 
 }
