@@ -7,6 +7,7 @@ public class StpUtil {
     public static String getLoginType(){
         return stpLogic.getLoginType();
     }
+
     /**
      * 会话登录
      * @param id 账号id，建议的类型：（long | int | String）
