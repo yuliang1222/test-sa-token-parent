@@ -15,4 +15,23 @@ public class StpUtil {
     public static void login(Object id) {
         stpLogic.login(id);
     }
+
+    public static void setTokenValue(String tokenValue){
+        stpLogic.setTokenValue(tokenValue);
+    }
+
+    public static void setTokenValue(String tokenValue, int cookieTimeout){
+        stpLogic.setTokenValue(tokenValue, cookieTimeout);
+    }
+
+    public static String getTokenValue() {
+        return stpLogic.getTokenValue();
+    }
+    public static String getTokenValueNotCut(){
+        return stpLogic.getTokenValueNotCut();
+    }
+    public static SaTokenInfo getTokenInfo() {
+        return stpLogic.getTokenInfo();
+    }
+
 }

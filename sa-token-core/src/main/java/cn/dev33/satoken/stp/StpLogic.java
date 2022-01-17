@@ -5,9 +5,13 @@ import cn.dev33.satoken.annotation.SaCheckLogin;
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import cn.dev33.satoken.annotation.SaCheckRole;
 import cn.dev33.satoken.annotation.SaCheckSafe;
+import cn.dev33.satoken.config.SaCookieConfig;
 import cn.dev33.satoken.config.SaTokenConfig;
 import cn.dev33.satoken.context.SaHolder;
+import cn.dev33.satoken.context.model.SaCookie;
 import cn.dev33.satoken.context.model.SaMode;
+import cn.dev33.satoken.context.model.SaRequest;
+import cn.dev33.satoken.context.model.SaStorage;
 import cn.dev33.satoken.dao.SaTokenDao;
 import cn.dev33.satoken.exception.*;
 import cn.dev33.satoken.session.SaSession;
@@ -350,26 +354,161 @@ public class StpLogic {
 		saveTokenToIdMapping(tokenValue, id, loginModel.getTimeout());
 		// 在当前会话写入tokenValue
 		setTokenValue(tokenValue, loginModel.getCookieTimeout());
-
 		// 写入 [token-last-activity]
+		setLastActivityToNow(tokenValue);
 		// $$ 通知监听器，账号xxx 登录成功
+		SaManager.getSaTokenListener().doLogin(loginType,id,loginModel);
+	}
+	/**
+	 * 写入指定token的 [最后操作时间] 为当前时间戳
+	 * @param tokenValue 指定token
+	 */
+	private void setLastActivityToNow(String tokenValue) {
+		// 如果token == null 或者 设置了[永不过期], 则立即返回
+		if (tokenValue == null || getConfig().getActivityTimeout() == SaTokenDao.NEVER_EXPIRE) {
+			return;
+		}
+		// 将[最后操作时间]标记为当前时间戳
+		getSaTokenDao().set(splicingKeyLastActivityTime(tokenValue),String.valueOf(System.currentTimeMillis()),getConfig().getTimeout());
 
+	}
+	public void setTokenValue(String tokenValue){
+		setTokenValue(tokenValue, (int)SaManager.getConfig().getTimeout());
 	}
 	public void setTokenValue(String tokenValue, int cookieTimeout){
 		if(SaFoxUtil.isEmpty(tokenValue)) {
 			return;
 		}
+		// 1. 将token保存到[存储器]里
+		setTokenValueToStorage(tokenValue);
 
+		// 2. 将 Token 保存到 [Cookie] 里
+		if (getConfig().getIsReadCookie()) {
+			setTokenValueToCookie(tokenValue, cookieTimeout);
+		}
 	}
-		public void saveTokenToIdMapping(String tokenValue, Object loginId, long timeout) {
+	public void setTokenValueToCookie(String tokenValue, int cookieTimeout){
+		SaCookieConfig cfg = getConfig().getCookie();
+		SaCookie cookie = new SaCookie()
+				.setName(getTokenName())
+				.setValue(tokenValue)
+				.setMaxAge(cookieTimeout)
+				.setDomain(cfg.getDomain())
+				.setPath(cfg.getPath())
+				.setSecure(cfg.getSecure())
+				.setHttpOnly(cfg.getHttpOnly())
+				.setSameSite(cfg.getSameSite())
+				;
+		SaHolder.getResponse().addCookie(cookie);
+	}
+	public String getTokenName() {
+		return splicingKeyTokenName();
+	}
+	public String splicingKeyTokenName() {
+		return getConfig().getTokenName();
+	}
+	public void setTokenValueToStorage(String tokenValue){
+		// 1. 将token保存到[存储器]里
+		SaStorage storage = SaHolder.getStorage();
+
+		// 2. 如果打开了 Token 前缀模式，则拼接上前缀
+		String tokenPrefix = getConfig().getTokenPrefix();
+		if(SaFoxUtil.isEmpty(tokenPrefix) == false) {
+			storage.set(splicingKeyJustCreatedSave(), tokenPrefix + SaTokenConsts.TOKEN_CONNECTOR_CHAT + tokenValue);
+		} else {
+			storage.set(splicingKeyJustCreatedSave(), tokenValue);
+		}
+
+		// 3. 写入 (无前缀)
+		storage.set(SaTokenConsts.JUST_CREATED_NOT_PREFIX, tokenValue);
+	}
+	public String splicingKeyJustCreatedSave() {
+//		return SaTokenConsts.JUST_CREATED_SAVE_KEY + loginType;
+		return SaTokenConsts.JUST_CREATED;
+	}
+	public void saveTokenToIdMapping(String tokenValue, Object loginId, long timeout) {
 		getSaTokenDao().set(splicingKeyTokenValue(tokenValue), String.valueOf(loginId), timeout);
 	}
+
 	public String createTokenValue(Object loginId, String device, long timeout) {
 		return SaStrategy.me.createToken.apply(loginId, loginType);
 	}
 	public boolean isDisable(Object loginId) {
 		return getSaTokenDao().get(splicingKeyDisable(loginId)) != null;
 
+	}
+
+	public String getTokenValue() {
+		String tokenValue = getTokenValueNotCut();
+		String tokenPrefix = getConfig().getTokenPrefix();
+		if(SaFoxUtil.isEmpty(tokenPrefix) == false) {
+			if(SaFoxUtil.isEmpty(tokenValue) || tokenValue.startsWith(tokenPrefix + SaTokenConsts.TOKEN_CONNECTOR_CHAT) == false) {
+				tokenValue = null;
+			} else {
+				// 则裁剪掉前缀
+				tokenValue = tokenValue.substring(tokenPrefix.length() + SaTokenConsts.TOKEN_CONNECTOR_CHAT.length());
+			}
+		}
+		// 3. 返回
+		return tokenValue;
+	}
+	/**
+	 * 获取当前TokenValue (不裁剪前缀)
+	 * @return /
+	 */
+	public String getTokenValueNotCut(){
+		// 0. 获取相应对象
+		SaStorage storage = SaHolder.getStorage();
+		SaRequest request = SaHolder.getRequest();
+		SaTokenConfig config = getConfig();
+		String keyTokenName = getTokenName();
+		String tokenValue = null;
+
+		// 1. 尝试从Storage里读取
+		if(storage.get(splicingKeyJustCreatedSave()) != null) {
+			tokenValue = String.valueOf(storage.get(splicingKeyJustCreatedSave()));
+		}
+		// 2. 尝试从请求体里面读取
+		if(tokenValue == null && config.getIsReadBody()){
+			tokenValue = request.getParam(keyTokenName);
+		}
+		// 3. 尝试从header里读取
+		if(tokenValue == null && config.getIsReadHead()){
+			tokenValue = request.getHeader(keyTokenName);
+		}
+		// 4. 尝试从cookie里读取
+		if(tokenValue == null && config.getIsReadCookie()){
+			tokenValue = request.getCookieValue(keyTokenName);
+		}
+
+		// 5. 返回
+		return tokenValue;
+	}
+
+	public SaTokenInfo getTokenInfo() {
+		SaTokenInfo info = new SaTokenInfo();
+		info.tokenName = getTokenName();
+		info.tokenValue = getTokenValue();
+		info.isLogin = isLogin();
+		info.loginId = getLoginIdDefaultNull();
+		info.loginType = getLoginType();
+		info.tokenTimeout = getTokenTimeout();
+		info.sessionTimeout = getSessionTimeout();
+		info.tokenSessionTimeout = getTokenSessionTimeout();
+		info.tokenActivityTimeout = getTokenActivityTimeout();
+		info.loginDevice = getLoginDevice();
+		return info;
+	}
+
+	private Boolean isLogin() {
+		// 判断条件：不为null，并且不在异常项集合里
+		return getLoginIdDefaultNull() != null;
+	}
+
+	private Boolean getLoginIdDefaultNull() {
+		// 如果正在[临时身份切换]
+		//
+		return null;
 	}
 //	private boolean isSwitch() {
 //		return SaHolder.getStorage().get(splicingKeySwitch()) != null;
