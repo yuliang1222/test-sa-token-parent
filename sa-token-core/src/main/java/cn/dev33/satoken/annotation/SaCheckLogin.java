@@ -11,9 +11,12 @@ import java.lang.annotation.Target;
  * @author kong
  *
  */
+
+
 @Retention(RetentionPolicy.RUNTIME)
 @Target({ ElementType.METHOD, ElementType.TYPE })
 public @interface SaCheckLogin {
+
 
     /**
      * 多账号体系下所属的账号体系标识 
