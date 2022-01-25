@@ -142,8 +142,31 @@ public class SaSsoTemplate {
 		return loginId;
 	}
 	// ---------------------- 构建URL ----------------------
+	/**
+	 * 构建URL：Server端 单点登录地址
+	 * @param clientLoginUrl Client端登录地址
+	 * @param back 回调路径
+	 * @return [SSO-Server端-认证地址 ]
+	 */
+	public String buildServerAuthUrl(String clientLoginUrl, String back) {
+		String serverUrl = SaManager.getConfig().getSso().getAuthUrl();
+		back = (back == null ? "" : back);
+		back = SaFoxUtil.encodeUrl(back);
+		// 拼接最终地址，格式示例：serverAuthUrl = http://xxx.com?redirectUrl=xxx.com?back=xxx.com
+		clientLoginUrl = SaFoxUtil.joinParam(clientLoginUrl, SaSsoConsts.ParamName.back, back);
+		String serverAuthUrl = SaFoxUtil.joinParam(serverUrl, SaSsoConsts.ParamName.redirect, clientLoginUrl);
+		return serverAuthUrl;
+	}
 
-
+	/**
+	 * 构建URL：Server端向Client下放ticke的地址
+	 * @param loginId 账号id
+	 * @param redirect Client端提供的重定向地址
+	 * @return see note
+	 */
+	public String buildRedirectUrl(Object loginId, String redirect) {
+		return null;
+	}
 
 
 
