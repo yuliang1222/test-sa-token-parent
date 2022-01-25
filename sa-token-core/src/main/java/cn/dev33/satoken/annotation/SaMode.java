@@ -1,4 +1,4 @@
-package cn.dev33.satoken.context.model;
+package cn.dev33.satoken.annotation;
 
 /**
  * 注解鉴权的验证模式 
