@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.function.Consumer;
 
 import static cn.dev33.satoken.SaManager.getSaTokenDao;
+import static cn.dev33.satoken.stp.StpUtil.stpLogic;
 
 /**
  * Sa-Token 权限认证，逻辑实现类
@@ -200,11 +201,75 @@ public class StpLogic {
 //		}
 		return null;
 	}
+	public void kickoutByTokenValue(String tokenValue) {
+		// 1. 清理 token-last-activity
+		clearLastActivity(tokenValue);
 
+		// 2. 不注销 Token-Session
+
+		// if. 无效 loginId 立即返回
+		String loginId = getLoginIdNotHandle(tokenValue);
+		if(isValidLoginId(loginId) == false) {
+			return;
+		}
+
+		// 3. 给token打上标记：被踢下线
+		updateTokenToIdMapping(tokenValue, NotLoginException.KICK_OUT);
+
+		// $$. 否则通知监听器，某某Token被踢下线了
+		SaManager.getSaTokenListener().doKickout(loginType, loginId, tokenValue);
+
+		// 4. 清理User-Session上的token签名 & 尝试注销User-Session
+		SaSession session = getSessionByLoginId(loginId, false);
+		if(session != null) {
+			session.removeTokenSign(tokenValue);
+			session.logoutByTokenSignCountToZero();
+		}
+	}
+	public void logoutByTokenValue(String tokenValue) {
+		// 1. 清理 token-last-activity
+		clearLastActivity(tokenValue);
+		// 2. 注销 Token-Session
+		deleteTokenSession(tokenValue);
+		// if. 无效 loginId 立即返回
+		String loginId = getLoginIdNotHandle(tokenValue);
+		if(isValidLoginId(loginId) == false) {
+			if(loginId != null) {
+				deleteTokenToIdMapping(tokenValue);
+			}
+			return;
+		}
+		// 3. 清理token-id索引
+		deleteTokenToIdMapping(tokenValue);
+		// $$ 通知监听器，某某Token注销下线了
+		SaManager.getSaTokenListener().doLogout(loginType, loginId, tokenValue);
+		// 4. 清理User-Session上的token签名 & 尝试注销User-Session
+	}
+	public void kickout(Object loginId) {
+		kickout(loginId, null);
+	}
+	public void kickout(Object loginId, String device) {
+		clearTokenCommonMethod(loginId, device, tokenValue -> {
+			// 将此 token 标记为已被踢下线
+			updateTokenToIdMapping(tokenValue, NotLoginException.KICK_OUT);
+			SaManager.getSaTokenListener().doKickout(loginType, loginId, tokenValue);
+		}, true);
+	}
+	public void deleteTokenToIdMapping(String tokenValue) {
+		getSaTokenDao().delete(splicingKeyTokenValue(tokenValue));
+	}
+	public boolean isValidLoginId(Object loginId) {
+		return loginId != null && !NotLoginException.ABNORMAL_LIST.contains(loginId.toString());
+	}
+	public void deleteTokenSession(String tokenValue) {
+		getSaTokenDao().delete(splicingKeyTokenSession(tokenValue));
+	}
 	public void login(Object id) {
 		login(id, new SaLoginModel());
 	}
-
+	public void login(Object id, boolean isLastingCookie) {
+		login(id, new SaLoginModel().setIsLastingCookie(isLastingCookie));
+	}
 	public SaTokenDao getSaTokenDao() {
 		return SaManager.getSaTokenDao();
 	}
@@ -318,6 +383,12 @@ public class StpLogic {
 	public String splicingKeyLastActivityTime(String tokenValue) {
 		return getConfig().getTokenName() + ":" + loginType + ":last-activity:" + tokenValue;
 	}
+
+	public void login(Object id, String device) {
+		login(id, new SaLoginModel().setDevice(device));
+	}
+
+
 	public void login(Object id, SaLoginModel loginModel) {
 		SaTokenException.throwByNull(id, "账号id不能为空");
 		// ------ 0、前置检查：如果此账号已被封禁.
@@ -452,6 +523,10 @@ public class StpLogic {
 		// 3. 返回
 		return tokenValue;
 	}
+
+	public static void main(String[] args) {
+		System.out.println();
+	}
 	/**
 	 * 获取当前TokenValue (不裁剪前缀)
 	 * @return /
@@ -499,18 +574,112 @@ public class StpLogic {
 		info.loginDevice = getLoginDevice();
 		return info;
 	}
+	public String getLoginDevice() {
+		// 如果没有token，直接返回 null
+		String tokenValue = getTokenValue();
+		if(tokenValue == null) {
+			return null;
+		}
+		// 如果还未登录，直接返回 null
+		if(!isLogin()) {
+			return null;
+		}
+		// 如果session为null的话直接返回 null
+		SaSession session = getSessionByLoginId(getLoginIdDefaultNull(), false);
+		if(session == null) {
+			return null;
+		}
+		// 遍历解析
+		List<TokenSign> tokenSignList = session.getTokenSignList();
+		for (TokenSign tokenSign : tokenSignList) {
+			if(tokenSign.getValue().equals(tokenValue)) {
+				return tokenSign.getDevice();
+			}
+		}
+		return null;
+	}
 
+	public long getTokenActivityTimeout() {
+		return getTokenActivityTimeoutByToken(getTokenValue());
+	}
+	public long getTokenSessionTimeout() {
+		return getTokenSessionTimeoutByTokenValue(getTokenValue());
+	}
+	public long getTokenSessionTimeoutByTokenValue(String tokenValue) {
+		return getSaTokenDao().getSessionTimeout(splicingKeyTokenSession(tokenValue));
+	}
+	public String splicingKeyTokenSession(String tokenValue) {
+		return getConfig().getTokenName() + ":" + loginType + ":token-session:" + tokenValue;
+	}
+	public long getSessionTimeout() {
+		return getSessionTimeoutByLoginId(getLoginIdDefaultNull());
+	}
+	public long getSessionTimeoutByLoginId(Object loginId) {
+		return getSaTokenDao().getSessionTimeout(splicingKeySession(loginId));
+	}
 	private Boolean isLogin() {
 		// 判断条件：不为null，并且不在异常项集合里
 		return getLoginIdDefaultNull() != null;
 	}
-
-	private Boolean getLoginIdDefaultNull() {
-		// 如果正在[临时身份切换]
-		//
-		return null;
+	public boolean isSwitch() {
+		return SaHolder.getStorage().get(splicingKeySwitch()) != null;
 	}
-//	private boolean isSwitch() {
-//		return SaHolder.getStorage().get(splicingKeySwitch()) != null;
-//	}
+	public String splicingKeySwitch() {
+		return SaTokenConsts.SWITCH_TO_SAVE_KEY + loginType;
+	}
+	public Object getSwitchLoginId() {
+		return SaHolder.getStorage().get(splicingKeySwitch());
+	}
+	private Object getLoginIdDefaultNull() {
+		// 如果正在[临时身份切换]
+		if (isSwitch()) {
+			return getSwitchLoginId();
+		}
+		// 如果连token都是空的, 则直接返回
+		String tokenValue = getTokenValue();
+		if(tokenValue == null) {
+			return null;
+		}
+		// loginId为null或者异常项里面, 均视为未登录, 返回null
+		Object loginId = getLoginIdNotHandle(tokenValue);
+		if(loginId == null || NotLoginException.ABNORMAL_LIST.contains(loginId)) {
+			return null;
+		}
+		// 如果已经 临时过期
+		if(getTokenActivityTimeoutByToken(tokenValue) == SaTokenDao.NOT_VALUE_EXPIRE) {
+			return null;
+		}
+		// 执行到此, 证明loginId已经是个正常
+		return loginId;
+	}
+	public long getTokenActivityTimeoutByToken(String tokenValue) {
+		if (tokenValue == null) {
+			return SaTokenDao.NOT_VALUE_EXPIRE;
+		}
+		if(getConfig().getActivityTimeout() == SaTokenDao.NEVER_EXPIRE) {
+			return SaTokenDao.NEVER_EXPIRE;
+		}
+		String keyLastActivityTime = splicingKeyLastActivityTime(tokenValue);
+		String lastActivityTimeString = getSaTokenDao().get(keyLastActivityTime);
+		// 查不到，返回-2
+		if(lastActivityTimeString == null) {
+			return SaTokenDao.NOT_VALUE_EXPIRE;
+		}
+		// 计算相差时间
+		long lastActivityTime = Long.parseLong(lastActivityTimeString);
+		long apartSecond = (System.currentTimeMillis() - lastActivityTime) / 1000;
+		long timeout = getConfig().getActivityTimeout() - apartSecond;
+		// 如果 < 0， 代表已经过期 ，返回-2
+		if(timeout < 0) {
+			return SaTokenDao.NOT_VALUE_EXPIRE;
+		}
+		return timeout;
+	}
+	private String getLoginIdNotHandle(String tokenValue) {
+		return getSaTokenDao().get(splicingKeyTokenValue(tokenValue));
+	}
+	public long getTokenTimeout() {
+		return getSaTokenDao().getTimeout(splicingKeyTokenValue(getTokenValue()));
+	}
+
 }

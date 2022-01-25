@@ -12,10 +12,10 @@ import cn.dev33.satoken.context.model.SaStorage;
 public interface SaTokenContext {
 	public SaRequest getRequest();
 	public SaResponse getResponse();
-	public SaStorage getSaStorage();
+	public SaStorage getStorage();
 	public boolean matchPath(String pattern, String path);
 
-	public default boolean isValidate() {
+	public default boolean isValid() {
 		return false;
 	}
 }
