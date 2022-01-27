@@ -1,7 +1,5 @@
 package cn.dev33.satoken.annotation;
 
-import cn.dev33.satoken.context.model.SaMode;
-
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;

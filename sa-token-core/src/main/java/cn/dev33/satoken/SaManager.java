@@ -154,4 +154,8 @@ public class SaManager {
     public static SaTokenContext getSaTokenContextOrSecond() {
         return null;
     }
+
+    public static void main(String[] args) {
+        System.out.println();
+    }
 }
